@@ -1,0 +1,31 @@
+---
+import { DesktopEnvironment } from '../components/DesktopEnvironment';
+import '../styles/desktop.css';
+
+const pageTitle = 'Winder Segura — Forward Deployed AI Agent Engineer | WINDER//OS';
+const pageDescription =
+  'My name is Winder Segura, a software developer and forward deployed engineer with 5 years of experience architecting and deploying autonomous AI agents for business.';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="text-scale" content="scale" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={pageDescription} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Google Fonts: Space Grotesk, Plus Jakarta Sans & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <DesktopEnvironment client:load />
+  </body>
+</html>
