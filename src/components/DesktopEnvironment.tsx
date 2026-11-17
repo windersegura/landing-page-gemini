@@ -141,6 +141,146 @@ export const DesktopEnvironment: React.FC = () => {
   const [selectedScope, setSelectedScope] = useState('Custom Operations AI Agent');
   const [clientNote, setClientNote] = useState('');
 
+  // Start Menu Popover Ref
+  const startMenuRef = useRef<HTMLDivElement | null>(null);
+  const dispatchFormRef = useRef<HTMLFormElement | null>(null);
+
+  // Polyfill feature detection & native Popover toggle sync
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
+      import('https://unpkg.com/@oddbird/popover-polyfill@latest/dist/popover.min.js' as any).catch(
+        () => {}
+      );
+    }
+    if (!('commandForElement' in HTMLButtonElement.prototype)) {
+      import('https://esm.run/invokers-polyfill' as any).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const popoverEl = startMenuRef.current;
+    if (!popoverEl) return;
+    const handleToggle = (e: Event) => {
+      const toggleEvent = e as ToggleEvent;
+      if (toggleEvent.newState) {
+        setStartMenuOpen(toggleEvent.newState === 'open');
+      }
+    };
+    popoverEl.addEventListener('toggle', handleToggle);
+    return () => popoverEl.removeEventListener('toggle', handleToggle);
+  }, []);
+
+  const hideStartMenu = () => {
+    setStartMenuOpen(false);
+    const popoverEl = startMenuRef.current as any;
+    if (popoverEl && typeof popoverEl.hidePopover === 'function') {
+      try {
+        popoverEl.hidePopover();
+      } catch {
+        // Ignore if already hidden
+      }
+    }
+  };
+
+  // Spatial Navigation (2D Arrow-Key Roving Tabindex)
+  const handleSpatialKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+      ArrowLeft: 'left',
+      ArrowRight: 'right',
+      ArrowUp: 'up',
+      ArrowDown: 'down'
+    };
+    const dir = dirMap[e.key];
+    if (!dir) return;
+
+    const rawTarget = (e.nativeEvent.composedPath?.()[0] || e.target) as HTMLElement;
+    if (
+      !rawTarget ||
+      rawTarget.matches?.(':read-write, select, input[type="range"], [role="slider"]')
+    ) {
+      return;
+    }
+
+    const container = e.currentTarget;
+    const candidates = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-spatial-item]')
+    ).filter((el) => (typeof el.checkVisibility === 'function' ? el.checkVisibility() : true));
+
+    if (!candidates.includes(rawTarget)) return;
+
+    const currentRect = rawTarget.getBoundingClientRect();
+    const currentCenterX = currentRect.left + currentRect.width / 2;
+    const currentCenterY = currentRect.top + currentRect.height / 2;
+    const tolerance = 2;
+
+    const inDirection = candidates.filter((cand) => {
+      if (cand === rawTarget) return false;
+      const r = cand.getBoundingClientRect();
+      switch (dir) {
+        case 'right':
+          return r.left >= currentRect.right - tolerance;
+        case 'left':
+          return r.right <= currentRect.left + tolerance;
+        case 'down':
+          return r.top >= currentRect.bottom - tolerance;
+        case 'up':
+          return r.bottom <= currentRect.top + tolerance;
+      }
+    });
+
+    if (inDirection.length === 0) return; // Do not preventDefault so native scrolling works
+
+    const isHorizontal = dir === 'left' || dir === 'right';
+    const aligned: Array<{ el: HTMLElement; gap: number; perpOffset: number }> = [];
+    const unaligned: Array<{ el: HTMLElement; score: number }> = [];
+
+    for (const cand of inDirection) {
+      const r = cand.getBoundingClientRect();
+      const candCenterX = r.left + r.width / 2;
+      const candCenterY = r.top + r.height / 2;
+
+      const gap =
+        dir === 'right'
+          ? Math.max(0, r.left - currentRect.right)
+          : dir === 'left'
+          ? Math.max(0, currentRect.left - r.right)
+          : dir === 'down'
+          ? Math.max(0, r.top - currentRect.bottom)
+          : Math.max(0, currentRect.top - r.bottom);
+
+      const perpOverlap = isHorizontal
+        ? Math.min(currentRect.bottom, r.bottom) > Math.max(currentRect.top, r.top)
+        : Math.min(currentRect.right, r.right) > Math.max(currentRect.left, r.left);
+
+      const perpOffset = isHorizontal
+        ? Math.abs(candCenterY - currentCenterY)
+        : Math.abs(candCenterX - currentCenterX);
+
+      if (perpOverlap) {
+        aligned.push({ el: cand, gap, perpOffset });
+      } else {
+        unaligned.push({ el: cand, score: gap + 2.5 * perpOffset });
+      }
+    }
+
+    let bestCandidate: HTMLElement | null = null;
+    if (aligned.length > 0) {
+      aligned.sort((a, b) => a.gap - b.gap || a.perpOffset - b.perpOffset);
+      bestCandidate = aligned[0].el;
+    } else if (unaligned.length > 0) {
+      unaligned.sort((a, b) => a.score - b.score);
+      bestCandidate = unaligned[0].el;
+    }
+
+    if (!bestCandidate) return;
+
+    e.preventDefault();
+    bestCandidate.focus();
+    bestCandidate.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+
   // Window Dragging Refs
   const dragRef = useRef<{
     id: WindowId;
@@ -212,7 +352,7 @@ export const DesktopEnvironment: React.FC = () => {
 
   const openWindow = (id: WindowId) => {
     setSelectedIcon(id);
-    setStartMenuOpen(false);
+    hideStartMenu();
     focusWindow(id);
   };
 
@@ -258,7 +398,7 @@ export const DesktopEnvironment: React.FC = () => {
 
   const openAllShowcaseWindows = () => {
     setWorkspaceMode('tiled');
-    setStartMenuOpen(false);
+    hideStartMenu();
     setWindows((prev) => {
       const next = { ...prev };
       (Object.keys(next) as WindowId[]).forEach((k, idx) => {
@@ -276,7 +416,7 @@ export const DesktopEnvironment: React.FC = () => {
 
   const resetDesktopCascade = () => {
     setWorkspaceMode('floating');
-    setStartMenuOpen(false);
+    hideStartMenu();
     setWindows(INITIAL_WINDOWS);
     setActiveWindowId('bio');
   };
@@ -440,22 +580,32 @@ export const DesktopEnvironment: React.FC = () => {
           <div className="win-sim-body">
             {/* Scenario Selector Tabs */}
             <div className="sim-top-controls">
-              <div className="sim-scenario-tabs" role="tablist">
-                {AGENT_SCENARIOS.map((sc) => (
-                  <button
-                    key={sc.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={sc.id === selectedScenarioId}
-                    className={`sim-tab-btn ${
-                      sc.id === selectedScenarioId ? 'sim-tab-btn--active' : ''
-                    }`}
-                    onClick={() => runScenarioSimulation(sc.id)}
-                  >
-                    <span className="sim-tab-code">{sc.code}</span>
-                    <span className="sim-tab-name">{sc.department}</span>
-                  </button>
-                ))}
+              <div
+                className="sim-scenario-tabs"
+                role="tablist"
+                aria-label="Agent Simulation Scenarios"
+                onKeyDown={handleSpatialKeyDown}
+              >
+                {AGENT_SCENARIOS.map((sc) => {
+                  const isSelected = sc.id === selectedScenarioId;
+                  return (
+                    <button
+                      key={sc.id}
+                      id={`sim-tab-${sc.id}`}
+                      type="button"
+                      role="tab"
+                      data-spatial-item=""
+                      tabIndex={isSelected ? 0 : -1}
+                      aria-selected={isSelected}
+                      aria-controls="sim-tabpanel-console"
+                      className={`sim-tab-btn ${isSelected ? 'sim-tab-btn--active' : ''}`}
+                      onClick={() => runScenarioSimulation(sc.id)}
+                    >
+                      <span className="sim-tab-code">{sc.code}</span>
+                      <span className="sim-tab-name">{sc.department}</span>
+                    </button>
+                  );
+                })}
               </div>
 
               <button
@@ -482,7 +632,12 @@ export const DesktopEnvironment: React.FC = () => {
             </div>
 
             {/* Dark Telemetry Console */}
-            <div className="sim-terminal-viewport">
+            <div
+              id="sim-tabpanel-console"
+              role="tabpanel"
+              aria-labelledby={`sim-tab-${selectedScenarioId}`}
+              className="sim-terminal-viewport"
+            >
               <div className="sim-trigger-line">
                 <span className="sim-prompt">$</span>
                 <span className="sim-trigger-payload">{currentScenario.triggerPayload}</span>
@@ -532,24 +687,41 @@ export const DesktopEnvironment: React.FC = () => {
           CAPABILITY_MODULES.find((c) => c.id === activeCapId) || CAPABILITY_MODULES[0];
         return (
           <div className="win-caps-body">
-            <div className="caps-sidebar">
-              {CAPABILITY_MODULES.map((mod) => (
-                <button
-                  key={mod.id}
-                  type="button"
-                  className={`caps-nav-btn ${
-                    mod.id === activeCapId ? 'caps-nav-btn--active' : ''
-                  }`}
-                  onClick={() => setActiveCapId(mod.id)}
-                >
-                  <span className="caps-nav-code">{mod.code}</span>
-                  <span className="caps-nav-title">{mod.title}</span>
-                  <ChevronRight size={15} className="caps-nav-arrow" />
-                </button>
-              ))}
+            <div
+              className="caps-sidebar"
+              role="tablist"
+              aria-label="Enterprise AI Capability Modules"
+              onKeyDown={handleSpatialKeyDown}
+            >
+              {CAPABILITY_MODULES.map((mod) => {
+                const isSelected = mod.id === activeCapId;
+                return (
+                  <button
+                    key={mod.id}
+                    id={`cap-tab-${mod.id}`}
+                    type="button"
+                    role="tab"
+                    data-spatial-item=""
+                    tabIndex={isSelected ? 0 : -1}
+                    aria-selected={isSelected}
+                    aria-controls="cap-detail-tabpanel"
+                    className={`caps-nav-btn ${isSelected ? 'caps-nav-btn--active' : ''}`}
+                    onClick={() => setActiveCapId(mod.id)}
+                  >
+                    <span className="caps-nav-code">{mod.code}</span>
+                    <span className="caps-nav-title">{mod.title}</span>
+                    <ChevronRight size={15} className="caps-nav-arrow" />
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="caps-detail-pane">
+            <div
+              id="cap-detail-tabpanel"
+              role="tabpanel"
+              aria-labelledby={`cap-tab-${activeCapId}`}
+              className="caps-detail-pane"
+            >
               <div className="caps-detail-header">
                 <span className="caps-code-pill">{currentCap.code} // PRODUCTION SPEC</span>
                 <h2 className="caps-detail-title">{currentCap.title}</h2>
@@ -675,7 +847,14 @@ export const DesktopEnvironment: React.FC = () => {
             </div>
 
             {/* Interactive Agent Dispatch Composer */}
-            <div className="contact-composer-box">
+            <form
+              ref={dispatchFormRef}
+              className="contact-composer-box"
+              onSubmit={(e) => {
+                e.preventDefault();
+                window.location.href = buildMailtoHref();
+              }}
+            >
               <div className="contact-composer-header">
                 <span>QUICK AGENT DEPLOYMENT DISPATCH</span>
                 <span>READY TO SEND</span>
@@ -706,7 +885,7 @@ export const DesktopEnvironment: React.FC = () => {
 
               <div className="contact-field-group">
                 <label htmlFor="dispatch-note" className="contact-label">
-                  Workflow Bottleneck or Objective (Optional)
+                  Workflow Bottleneck or Objective (Optional — Enter to transmit, Shift+Enter for new line)
                 </label>
                 <textarea
                   id="dispatch-note"
@@ -715,6 +894,15 @@ export const DesktopEnvironment: React.FC = () => {
                   placeholder="e.g., Automate invoice reconciliation across NetSuite & Slack with human approval gates..."
                   value={clientNote}
                   onChange={(e) => setClientNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) {
+                        return;
+                      }
+                      dispatchFormRef.current?.requestSubmit();
+                    }
+                  }}
                 />
               </div>
 
@@ -722,12 +910,12 @@ export const DesktopEnvironment: React.FC = () => {
                 <span className="contact-Hint">
                   Routes directly to <strong>{PROFILE_DATA.email}</strong>
                 </span>
-                <a href={buildMailtoHref()} className="hw-btn hw-btn--primary">
+                <button type="submit" className="hw-btn hw-btn--primary">
                   <Send size={15} />
                   <span>Transmit Deployment Brief</span>
-                </a>
+                </button>
               </div>
-            </div>
+            </form>
           </div>
         );
     }
@@ -801,7 +989,9 @@ export const DesktopEnvironment: React.FC = () => {
           <button
             type="button"
             className="menubar-brand-btn"
-            onClick={() => setStartMenuOpen((prev) => !prev)}
+            aria-expanded={startMenuOpen}
+            aria-controls="os-start-menu-popover"
+            {...({ commandfor: 'os-start-menu-popover', command: 'toggle-popover' } as any)}
           >
             <Cpu size={15} className="brand-cpu-icon" />
             <span>WINDER//OS</span>
@@ -864,9 +1054,6 @@ export const DesktopEnvironment: React.FC = () => {
         className={`os-desktop-surface ${
           workspaceMode === 'tiled' ? 'os-desktop-surface--tiled' : ''
         }`}
-        onClick={() => {
-          if (startMenuOpen) setStartMenuOpen(false);
-        }}
       >
         {/* Background Technical Watermark */}
         <div className="desktop-watermark" aria-hidden="true">
@@ -875,7 +1062,12 @@ export const DesktopEnvironment: React.FC = () => {
         </div>
 
         {/* Left Desktop Icon Grid */}
-        <aside className="desktop-icon-rail" aria-label="Desktop Shortcuts">
+        <aside
+          className="desktop-icon-rail"
+          role="listbox"
+          aria-label="Desktop Shortcuts"
+          onKeyDown={handleSpatialKeyDown}
+        >
           {desktopIcons.map((item) => {
             const IconComp = item.icon;
             const isSelected = selectedIcon === item.id;
@@ -885,9 +1077,14 @@ export const DesktopEnvironment: React.FC = () => {
               <button
                 key={item.id}
                 type="button"
+                role="option"
+                aria-selected={isSelected}
+                data-spatial-item=""
+                tabIndex={isSelected ? 0 : -1}
                 className={`desktop-icon-btn ${
                   isSelected ? 'desktop-icon-btn--selected' : ''
                 }`}
+                onFocus={() => setSelectedIcon(item.id)}
                 onClick={(e) => {
                   e.stopPropagation();
                   setSelectedIcon(item.id);
@@ -1011,61 +1208,64 @@ export const DesktopEnvironment: React.FC = () => {
         </section>
 
         {/* Start Menu Popover */}
-        {startMenuOpen && (
-          <div
-            className="os-start-menu"
-            onClick={(e) => e.stopPropagation()}
-            role="menu"
-            aria-label="WINDER//OS Start Launcher"
-          >
-            <div className="start-menu-banner">
-              <div className="start-banner-name">{PROFILE_DATA.name}</div>
-              <div className="start-banner-role">Forward Deployed AI Engineer</div>
-            </div>
-
-            <div className="start-menu-list">
-              {(Object.values(windows) as WindowConfig[]).map((w) => {
-                const IconComp = w.icon;
-                return (
-                  <button
-                    key={w.id}
-                    type="button"
-                    className="start-menu-item"
-                    onClick={() => openWindow(w.id)}
-                  >
-                    <IconComp size={16} />
-                    <div className="start-item-text">
-                      <strong>{w.shortTitle}</strong>
-                      <span>{w.subtitle}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="start-menu-footer">
-              <button
-                type="button"
-                className="start-footer-btn"
-                onClick={() => {
-                  setStartMenuOpen(false);
-                  setIsBooting(true);
-                }}
-              >
-                <Power size={14} />
-                <span>Replay Waiting / Boot Screen</span>
-              </button>
-              <button
-                type="button"
-                className="start-footer-btn"
-                onClick={resetDesktopCascade}
-              >
-                <RotateCcw size={14} />
-                <span>Reset Window Layout</span>
-              </button>
-            </div>
+        <div
+          id="os-start-menu-popover"
+          ref={startMenuRef}
+          {...({ popover: 'auto' } as any)}
+          className="os-start-menu"
+          role="menu"
+          aria-label="WINDER//OS Start Launcher"
+        >
+          <div className="start-menu-banner">
+            <div className="start-banner-name">{PROFILE_DATA.name}</div>
+            <div className="start-banner-role">Forward Deployed AI Engineer</div>
           </div>
-        )}
+
+          <div className="start-menu-list">
+            {(Object.values(windows) as WindowConfig[]).map((w) => {
+              const IconComp = w.icon;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  role="menuitem"
+                  className="start-menu-item"
+                  onClick={() => openWindow(w.id)}
+                >
+                  <IconComp size={16} />
+                  <div className="start-item-text">
+                    <strong>{w.shortTitle}</strong>
+                    <span>{w.subtitle}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="start-menu-footer">
+            <button
+              type="button"
+              role="menuitem"
+              className="start-footer-btn"
+              onClick={() => {
+                hideStartMenu();
+                setIsBooting(true);
+              }}
+            >
+              <Power size={14} />
+              <span>Replay Waiting / Boot Screen</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="start-footer-btn"
+              onClick={resetDesktopCascade}
+            >
+              <RotateCcw size={14} />
+              <span>Reset Window Layout</span>
+            </button>
+          </div>
+        </div>
       </main>
 
       {/* Bottom PC Taskbar */}
@@ -1073,24 +1273,36 @@ export const DesktopEnvironment: React.FC = () => {
         <div className="taskbar-left">
           <button
             type="button"
+            aria-expanded={startMenuOpen}
+            aria-controls="os-start-menu-popover"
+            {...({ commandfor: 'os-start-menu-popover', command: 'toggle-popover' } as any)}
             className={`taskbar-start-btn ${
               startMenuOpen ? 'taskbar-start-btn--active' : ''
             }`}
-            onClick={() => setStartMenuOpen((prev) => !prev)}
           >
             <span className="start-led" />
             <span>START // CMD</span>
           </button>
 
-          <div className="taskbar-window-tabs" role="tablist" aria-label="Running Applications">
+          <div
+            className="taskbar-window-tabs"
+            role="tablist"
+            aria-label="Running Applications"
+            onKeyDown={handleSpatialKeyDown}
+          >
             {(Object.values(windows) as WindowConfig[]).map((win) => {
               const IconComp = win.icon;
               const isFocused =
                 activeWindowId === win.id && win.isOpen && !win.isMinimized;
+              const isTabStop = activeWindowId === win.id;
               return (
                 <button
                   key={win.id}
                   type="button"
+                  role="tab"
+                  aria-selected={isFocused}
+                  data-spatial-item=""
+                  tabIndex={isTabStop ? 0 : -1}
                   className={`taskbar-tab ${win.isOpen ? 'taskbar-tab--open' : ''} ${
                     isFocused ? 'taskbar-tab--focused' : ''
                   }`}

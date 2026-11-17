@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BOOT_LOG_LINES, PROFILE_DATA } from '../data/workstationData';
 import { Cpu, ShieldCheck, Terminal, Zap, ArrowRight } from 'lucide-react';
 
@@ -10,18 +10,29 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onComplete }) => {
   const [progress, setProgress] = useState(0);
   const [visibleLines, setVisibleLines] = useState(1);
   const [isExiting, setIsExiting] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   const finishBoot = () => {
     if (isExiting) return;
     setIsExiting(true);
     window.setTimeout(() => {
+      if (dialogRef.current?.open) {
+        dialogRef.current.close();
+      }
       onComplete();
     }, 340);
   };
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) {
+      dialog.showModal();
+    }
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+      if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         finishBoot();
       }
@@ -65,10 +76,25 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onComplete }) => {
   ];
 
   return (
-    <div
+    <dialog
+      ref={dialogRef}
+      {...({ closedby: 'any' } as any)}
+      onCancel={(e) => {
+        e.preventDefault();
+        finishBoot();
+      }}
+      onClose={() => {
+        if (!isExiting) {
+          onComplete();
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === dialogRef.current) {
+          finishBoot();
+        }
+      }}
       className={`boot-overlay ${isExiting ? 'boot-overlay--exiting' : ''}`}
-      role="dialog"
-      aria-label="WINDER//OS Workstation Initialization Screen"
+      aria-labelledby="boot-dialog-title"
     >
       <div className="boot-scanlines" aria-hidden="true" />
 
@@ -91,7 +117,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onComplete }) => {
           <div className="boot-identity-banner">
             <div>
               <p className="boot-eyebrow">AUTONOMOUS ENTERPRISE AI DEPLOYMENT UNIT</p>
-              <h1 className="boot-headline">
+              <h1 id="boot-dialog-title" className="boot-headline">
                 Initializing Forward-Deployed Agent Environment...
               </h1>
             </div>
@@ -165,6 +191,7 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onComplete }) => {
           </div>
           <button
             type="button"
+            autoFocus
             onClick={finishBoot}
             className="boot-skip-btn"
           >
@@ -173,6 +200,6 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onComplete }) => {
           </button>
         </footer>
       </div>
-    </div>
+    </dialog>
   );
 };
